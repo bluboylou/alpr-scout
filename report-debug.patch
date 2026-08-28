@@ -1,0 +1,75 @@
+diff --git a/src/main.ts b/src/main.ts
+index 8d7f7c9..c36c143 100644
+--- a/src/main.ts
++++ b/src/main.ts
+@@ -34,6 +34,13 @@ import {
+   showReportHandoffOnPhone,
+ } from './phone-ui'
+ 
++// [TEMPORARY DEBUG INSTRUMENTATION - REMOVE BEFORE MERGE]
++const DEBUG_LOG_PREFIX = '[ALPR-DEBUG]'
++function debugLog(...args: unknown[]): void {
++  console.error(DEBUG_LOG_PREFIX, ...args)
++}
++// [/TEMPORARY DEBUG INSTRUMENTATION]
++
+ const MAIN_CONTAINER_ID = 1
+ const MAIN_CONTAINER_NAME = 'main'
+ const STORAGE_KEY = 'alprScout:lastReport'
+@@ -331,10 +338,19 @@ class AlprScoutApp {
+     this.screen = { kind: 'report-location', message: 'Getting a precise phone location...' }
+     await this.renderCurrent()
+ 
+-    const location = await this.bridge.getAppLocation({
+-      accuracy: AppLocationAccuracy.High,
+-      timeoutMs: 10_000,
+-    })
++    debugLog('beginReport: calling getAppLocation', 'lastLocation=', this.lastLocation ? `${this.lastLocation.latitude},${this.lastLocation.longitude}` : 'null')
++
++    let location: AppLocation | null
++    try {
++      location = await this.bridge.getAppLocation({
++        accuracy: AppLocationAccuracy.High,
++        timeoutMs: 10_000,
++      })
++      debugLog('beginReport: getAppLocation RESOLVED', 'location=', location ? `${location.latitude},${location.longitude}` : 'NULL')
++    } catch (locError) {
++      debugLog('beginReport: getAppLocation REJECTED', locError instanceof Error ? locError.message : String(locError))
++      throw locError
++    }
+ 
+     if (!location) {
+       this.screen = { kind: 'home', selection: 1, notice: 'Location unavailable; report not started' }
+@@ -570,10 +586,17 @@ class AlprScoutApp {
+   }
+ 
+   private async handleEvent(event: EvenHubEvent): Promise<void> {
++    const _rawTextEvent = event.textEvent
++    debugLog('handleEvent ENTRY', 'eventType=', _rawTextEvent?.eventType, 'eventType_type=', typeof _rawTextEvent?.eventType, 'containerID=', _rawTextEvent?.containerID, 'inputLocked=', this.inputLocked, 'screen=', this.screen.kind)
++
+     const textEvent = event.textEvent
+-    if (!textEvent || textEvent.containerID !== MAIN_CONTAINER_ID || this.inputLocked) return
++    if (!textEvent || textEvent.containerID !== MAIN_CONTAINER_ID || this.inputLocked) {
++      debugLog('handleEvent EARLY-RETURN', 'reason=', !textEvent ? 'no-textEvent' : textEvent.containerID !== MAIN_CONTAINER_ID ? `containerID-mismatch(${textEvent.containerID})` : 'inputLocked')
++      return
++    }
+ 
+     this.inputLocked = true
++    debugLog('handleEvent PROCESSING', 'eventType=', textEvent.eventType, 'isCLICK=', textEvent.eventType === OsEventTypeList.CLICK_EVENT, 'isUndefined=', textEvent.eventType === undefined)
+     try {
+       switch (textEvent.eventType) {
+         case OsEventTypeList.CLICK_EVENT:
+@@ -591,11 +614,13 @@ class AlprScoutApp {
+           break
+       }
+     } catch (error) {
++      debugLog('handleEvent CAUGHT-ERROR', error instanceof Error ? error.message : String(error))
+       const message = error instanceof Error ? error.message : 'Action failed'
+       this.screen = { kind: 'home', selection: 0, notice: truncate(message, 52) }
+       showPhoneMessage(message)
+       await this.renderCurrent()
+     } finally {
++      debugLog('handleEvent FINALLY', 'screen=', this.screen.kind, 'inputLocked=', this.inputLocked)
+       this.inputLocked = false
+     }
+   }

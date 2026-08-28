@@ -331,20 +331,40 @@ class AlprScoutApp {
     this.screen = { kind: 'report-location', message: 'Getting a precise phone location...' }
     await this.renderCurrent()
 
-    const location = await this.bridge.getAppLocation({
-      accuracy: AppLocationAccuracy.High,
-      timeoutMs: 10_000,
-    })
+    // Attempt a fresh high-accuracy location fix, but fall back to the last
+    // known location (captured during refreshNearby) if the SDK returns null
+    // or throws. This prevents the report flow from silently bailing to the
+    // home menu when the phone's GPS is off or location permission was denied.
+    let location: AppLocation | null = null
+    try {
+      location = await this.bridge.getAppLocation({
+        accuracy: AppLocationAccuracy.High,
+        timeoutMs: 5_000,
+      })
+    } catch {
+      // getAppLocation rejected (e.g. permission denied). Fall back to
+      // lastLocation below if available; otherwise show a clear error.
+      location = null
+    }
 
-    if (!location) {
-      this.screen = { kind: 'home', selection: 1, notice: 'Location unavailable; report not started' }
+    // Prefer the fresh fix, but fall back to the last known location.
+    const resolvedLocation = location ?? this.lastLocation
+
+    if (!resolvedLocation) {
+      // No location at all — show a clear, actionable error and keep the
+      // user on the home screen at their original selection (1).
+      this.screen = {
+        kind: 'home',
+        selection: 1,
+        notice: 'Location unavailable. Enable phone GPS and location permission.',
+      }
       await this.renderCurrent()
       return
     }
 
-    this.lastLocation = location
+    this.lastLocation = resolvedLocation
     this.report = {
-      location,
+      location: resolvedLocation,
       profileIndex: 0,
       mountIndex: 0,
       direction: 0,
@@ -592,7 +612,10 @@ class AlprScoutApp {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Action failed'
-      this.screen = { kind: 'home', selection: 0, notice: truncate(message, 52) }
+      // Preserve the user's current selection instead of resetting to 0,
+      // so the error notice doesn't also jump the cursor to the top.
+      const currentSelection = this.screen.kind === 'home' ? this.screen.selection : 1
+      this.screen = { kind: 'home', selection: currentSelection, notice: truncate(message, 52) }
       showPhoneMessage(message)
       await this.renderCurrent()
     } finally {
