@@ -1,0 +1,32 @@
+{
+  "package_id": "dev.coreydavis.alprscout",
+  "edition": "202601",
+  "name": "ALPR Scout",
+  "version": "0.1.0",
+  "min_sdk_version": "0.0.14",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Downloads nearby public ALPR records and opens the documented DeFlock reporting workflow.",
+      "whitelist": [
+        "https://overpass-api.de",
+        "https://deflock.org",
+        "https://www.openstreetmap.org"
+      ]
+    },
+    {
+      "name": "location",
+      "desc": "Finds nearby cameras and records the location of a camera report."
+    },
+    {
+      "name": "camera",
+      "desc": "Lets you photograph a publicly visible surveillance camera for a report."
+    },
+    {
+      "name": "album",
+      "desc": "Lets you choose an existing surveillance-camera photo for a report."
+    }
+  ],
+  "supported_languages": ["en"]
+}

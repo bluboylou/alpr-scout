@@ -1,0 +1,20 @@
+:root {
+  color: #c7f7d4;
+  background: #07120c;
+  font-family: system-ui, sans-serif;
+  color-scheme: dark;
+}
+
+body {
+  display: grid;
+  min-height: 100vh;
+  margin: 0;
+  place-items: center;
+}
+
+#phone-status {
+  width: min(32rem, calc(100% - 3rem));
+  line-height: 1.5;
+  text-align: center;
+}
+
