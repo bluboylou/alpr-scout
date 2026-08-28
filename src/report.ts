@@ -63,6 +63,7 @@ export const CAMERA_MOUNTS = [
 
 export interface ReportDraft {
   createdAt: string
+  isDemo?: boolean
   location: Coordinate
   accuracyMeters?: number
   profile: CameraProfile
@@ -113,4 +114,3 @@ export function buildOsmNodeUrl(nodeId: number): string {
 export function buildDeflockNodeUrl(nodeId: number): string {
   return `deflockapp://node?id=${encodeURIComponent(nodeId)}`
 }
-

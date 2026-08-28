@@ -12,6 +12,7 @@ export interface NearbyCamera extends Coordinate {
   distanceMeters: number
   bearingDegrees: number
   tags: Record<string, string>
+  isDemo?: boolean
 }
 
 interface OverpassElement {
@@ -131,4 +132,3 @@ export function cameraDisplayName(camera: NearbyCamera): string {
     'Unidentified ALPR'
   )
 }
-

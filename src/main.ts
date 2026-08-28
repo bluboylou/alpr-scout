@@ -17,6 +17,7 @@ import {
   fetchNearbyCameras,
   type NearbyCamera,
 } from './deflock-data'
+import { createDemoCameras, DEMO_LOCATION } from './demo-data'
 import {
   cardinalDirection,
   formatDistance,
@@ -38,6 +39,9 @@ const MAIN_CONTAINER_ID = 1
 const MAIN_CONTAINER_NAME = 'main'
 const STORAGE_KEY = 'alprScout:lastReport'
 const MAX_LINE_LENGTH = 42
+const DEMO_NOTICE = 'DEMO DATA - live lookup unavailable'
+const SHOW_DEMO_CAMERA =
+  import.meta.env.DEV && new URLSearchParams(window.location.search).get('preview') === 'camera'
 
 const HOME_ACTIONS = ['nearby', 'report', 'refresh'] as const
 const PHOTO_CHOICES = ['Camera', 'Album', 'No photo'] as const
@@ -59,6 +63,7 @@ type Screen =
 
 interface WorkingReport {
   location: AppLocation
+  isDemoLocation: boolean
   photo?: AppImageAsset
   profileIndex: number
   mountIndex: number
@@ -87,6 +92,26 @@ class AlprScoutApp {
   private inputLocked = false
 
   constructor(private readonly bridge: EvenAppBridge) {}
+
+  private async requestLocation(timeoutMs: number): Promise<AppLocation | null> {
+    try {
+      return (
+        (await this.bridge.getAppLocation({
+          accuracy: AppLocationAccuracy.High,
+          timeoutMs,
+        })) ?? null
+      )
+    } catch {
+      // The simulator rejects location requests instead of resolving null.
+      // Normalize both host behaviors so development fallback and production
+      // permission handling follow the same path.
+      return null
+    }
+  }
+
+  private isUsingDemoCameras(): boolean {
+    return this.nearby.length > 0 && this.nearby.every((camera) => camera.isDemo)
+  }
 
   async start(): Promise<void> {
     const result = await this.bridge.createStartUpPageContainer(
@@ -266,7 +291,7 @@ class AlprScoutApp {
             'REVIEW REPORT',
             `${profile?.name ?? 'Unknown'} / ${(mount ?? 'pole').replaceAll('_', ' ')}`,
             `Facing ${Math.round(report.direction)}° ${cardinalDirection(report.direction)}`,
-            `${report.location.latitude.toFixed(5)}, ${report.location.longitude.toFixed(5)}`,
+            `${report.isDemoLocation ? 'DEMO ' : ''}${report.location.latitude.toFixed(5)}, ${report.location.longitude.toFixed(5)}`,
             `Photo: ${report.photo ? 'yes' : 'no'}`,
             '',
             'Press: prepare phone handoff',
@@ -297,10 +322,7 @@ class AlprScoutApp {
     showPhoneMessage('ALPR Scout is finding nearby public camera records...')
 
     try {
-      const location = await this.bridge.getAppLocation({
-        accuracy: AppLocationAccuracy.High,
-        timeoutMs: 8_000,
-      })
+      const location = await this.requestLocation(8_000)
 
       if (!location) {
         throw new Error('Location unavailable. Check phone permission and GPS.')
@@ -320,8 +342,24 @@ class AlprScoutApp {
       )
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Nearby lookup failed'
-      this.screen = { kind: 'home', selection: 2, notice: truncate(message, 52) }
-      showPhoneMessage(message)
+      if (import.meta.env.DEV) {
+        const demoOrigin = this.lastLocation ?? DEMO_LOCATION
+        this.lastLocation = demoOrigin
+        this.nearby = createDemoCameras(demoOrigin)
+        this.screen = SHOW_DEMO_CAMERA
+          ? { kind: 'nearby', index: 0, notice: DEMO_NOTICE }
+          : {
+              kind: 'home',
+              selection: 0,
+              notice: DEMO_NOTICE,
+            }
+        showPhoneMessage(
+          `Live lookup failed (${message}). Loaded ${this.nearby.length} simulator demo cameras instead.`,
+        )
+      } else {
+        this.screen = { kind: 'home', selection: 2, notice: truncate(message, 52) }
+        showPhoneMessage(message)
+      }
     }
 
     await this.renderCurrent()
@@ -331,28 +369,11 @@ class AlprScoutApp {
     this.screen = { kind: 'report-location', message: 'Getting a precise phone location...' }
     await this.renderCurrent()
 
-    // Attempt a fresh high-accuracy location fix, but fall back to the last
-    // known location (captured during refreshNearby) if the SDK returns null
-    // or throws. This prevents the report flow from silently bailing to the
-    // home menu when the phone's GPS is off or location permission was denied.
-    let location: AppLocation | null = null
-    try {
-      location = await this.bridge.getAppLocation({
-        accuracy: AppLocationAccuracy.High,
-        timeoutMs: 5_000,
-      })
-    } catch {
-      // getAppLocation rejected (e.g. permission denied). Fall back to
-      // lastLocation below if available; otherwise show a clear error.
-      location = null
-    }
+    const liveLocation = await this.requestLocation(5_000)
+    const fallbackLocation = this.lastLocation ?? (import.meta.env.DEV ? DEMO_LOCATION : null)
+    const location = liveLocation ?? fallbackLocation
 
-    // Prefer the fresh fix, but fall back to the last known location.
-    const resolvedLocation = location ?? this.lastLocation
-
-    if (!resolvedLocation) {
-      // No location at all — show a clear, actionable error and keep the
-      // user on the home screen at their original selection (1).
+    if (!location) {
       this.screen = {
         kind: 'home',
         selection: 1,
@@ -362,14 +383,24 @@ class AlprScoutApp {
       return
     }
 
-    this.lastLocation = resolvedLocation
+    const isDemoLocation =
+      !liveLocation &&
+      import.meta.env.DEV &&
+      (this.lastLocation === null || this.isUsingDemoCameras())
+
+    this.lastLocation = location
     this.report = {
-      location: resolvedLocation,
+      location,
+      isDemoLocation,
       profileIndex: 0,
       mountIndex: 0,
       direction: 0,
     }
-    this.screen = { kind: 'report-photo', selection: 0 }
+    this.screen = {
+      kind: 'report-photo',
+      selection: 0,
+      notice: liveLocation ? undefined : 'DEMO LOCATION - choose No photo',
+    }
     await this.renderCurrent()
   }
 
@@ -419,6 +450,7 @@ class AlprScoutApp {
 
     return {
       createdAt: new Date().toISOString(),
+      isDemo: report.isDemoLocation,
       location: {
         latitude: report.location.latitude,
         longitude: report.location.longitude,
@@ -481,7 +513,10 @@ class AlprScoutApp {
         const camera = this.nearby[this.screen.index]
         if (!camera) return
         showNearbyCameraOnPhone(camera)
-        this.screen = { ...this.screen, notice: 'Links ready on phone' }
+        this.screen = {
+          ...this.screen,
+          notice: camera.isDemo ? 'Demo details ready on phone' : 'Links ready on phone',
+        }
         await this.renderCurrent()
         return
       }
@@ -584,20 +619,30 @@ class AlprScoutApp {
     this.screen = {
       kind: 'home',
       selection: 0,
-      notice: this.lastLocation ? `${this.nearby.length} public cameras within 5 km` : undefined,
+      notice: this.isUsingDemoCameras()
+        ? DEMO_NOTICE
+        : this.lastLocation
+          ? `${this.nearby.length} public cameras within 5 km`
+          : undefined,
     }
     await this.renderCurrent()
   }
 
   private async handleEvent(event: EvenHubEvent): Promise<void> {
     const textEvent = event.textEvent
-    if (!textEvent || textEvent.containerID !== MAIN_CONTAINER_ID || this.inputLocked) return
+    const sysEvent = event.sysEvent
+
+    if ((!textEvent && !sysEvent) || this.inputLocked) return
+    if (textEvent && textEvent.containerID !== MAIN_CONTAINER_ID) return
+
+    // A protobuf CLICK_EVENT has ordinal 0, so the simulator's system-event
+    // payload omits eventType entirely. Treat that missing value as a click.
+    const eventType = textEvent?.eventType ?? sysEvent?.eventType ?? OsEventTypeList.CLICK_EVENT
 
     this.inputLocked = true
     try {
-      switch (textEvent.eventType) {
+      switch (eventType) {
         case OsEventTypeList.CLICK_EVENT:
-        case undefined:
           await this.handleClick()
           break
         case OsEventTypeList.SCROLL_TOP_EVENT:
@@ -612,8 +657,6 @@ class AlprScoutApp {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Action failed'
-      // Preserve the user's current selection instead of resetting to 0,
-      // so the error notice doesn't also jump the cursor to the top.
       const currentSelection = this.screen.kind === 'home' ? this.screen.selection : 1
       this.screen = { kind: 'home', selection: currentSelection, notice: truncate(message, 52) }
       showPhoneMessage(message)

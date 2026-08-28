@@ -48,6 +48,16 @@ export function showNearbyCameraOnPhone(camera: NearbyCamera): void {
 
   const heading = document.createElement('h1')
   heading.textContent = camera.tags.manufacturer || 'Mapped ALPR camera'
+
+  if (camera.isDemo) {
+    element.append(
+      heading,
+      paragraph('Simulator demo record - no external camera record exists.'),
+      paragraph(`${camera.latitude.toFixed(6)}, ${camera.longitude.toFixed(6)}`),
+    )
+    return
+  }
+
   element.append(
     heading,
     paragraph(`${camera.latitude.toFixed(6)}, ${camera.longitude.toFixed(6)}`),
@@ -70,10 +80,13 @@ export function showReportHandoffOnPhone(
   if (!element) return
 
   const heading = document.createElement('h1')
-  heading.textContent = 'Camera report ready'
+  heading.textContent = draft.isDemo ? 'Demo camera report' : 'Camera report ready'
 
   element.append(
     heading,
+    ...(draft.isDemo
+      ? [paragraph('Simulator test data only. Do not submit this report.')]
+      : []),
     paragraph(
       `${draft.profile.name}, facing ${draft.direction}°, at ${draft.location.latitude.toFixed(6)}, ${draft.location.longitude.toFixed(6)}.`,
     ),
@@ -109,8 +122,12 @@ export function showReportHandoffOnPhone(
 
   element.append(
     copyButton,
-    link('Open the DeFlock reporting guide', DEFLOCK_REPORT_GUIDE_URL),
-    link('Open OSM editor at this location', buildOsmEditorUrl(draft.location)),
+    ...(draft.isDemo
+      ? []
+      : [
+          link('Open the DeFlock reporting guide', DEFLOCK_REPORT_GUIDE_URL),
+          link('Open OSM editor at this location', buildOsmEditorUrl(draft.location)),
+        ]),
     paragraph(
       'Review the point and tags before saving. A photo is a session-only reference and is not uploaded automatically.',
     ),

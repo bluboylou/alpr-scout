@@ -1,20 +1,22 @@
 {
   "name": "alpr-scout",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
+    "simulator": "evenhub-simulator http://localhost:5173/",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "pack": "evenhub pack app.json dist -o alpr-scout.ehpk --sdk-ver 0.0.14"
+    "pack": "evenhub pack app.json dist -o alpr-scout.ehpk --sdk-ver 0.0.14 --enforce-manual-version"
   },
   "dependencies": {
-    "@evenrealities/even_hub_sdk": "^0.0.14"
+    "@evenrealities/even_hub_sdk": "0.0.14"
   },
   "devDependencies": {
     "@evenrealities/evenhub-cli": "0.1.14",
+    "@evenrealities/evenhub-simulator": "^0.9.3",
     "@types/node": "26.3.0",
     "typescript": "5.9.3",
     "vite": "8.2.2",

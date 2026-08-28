@@ -3,5 +3,6 @@ dist/
 coverage/
 *.ehpk
 *.log
+glasses_*.png
+.simulator-*.png
 .DS_Store
-
