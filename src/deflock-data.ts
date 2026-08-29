@@ -92,7 +92,10 @@ function buildNearbyQuery(origin: Coordinate, radiusMeters: number): string {
   const latitude = origin.latitude.toFixed(6)
   const longitude = origin.longitude.toFixed(6)
 
-  return `[out:json][timeout:20];node(around:${radius},${latitude},${longitude})["man_made"="surveillance"]["surveillance:type"="ALPR"];out tags;`
+  // `out tags` omits node latitude/longitude, which makes otherwise valid
+  // matches impossible for parseOverpassResponse to place on the map.
+  // `center` keeps the compact tag response while retaining node geometry.
+  return `[out:json][timeout:20];node(around:${radius},${latitude},${longitude})["man_made"="surveillance"]["surveillance:type"="ALPR"];out tags center;`
 }
 
 export async function fetchNearbyCameras(

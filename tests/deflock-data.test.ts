@@ -38,7 +38,7 @@ describe('DeFlock-compatible OSM data', () => {
     expect(result[1]?.tags).toEqual({ manufacturer: 'Flock Safety' })
   })
 
-  it('sends a bounded nearby ALPR query', async () => {
+  it('sends a bounded nearby ALPR query that includes result geometry', async () => {
     let capturedRequest:
       | { input: RequestInfo | URL; options?: RequestInit }
       | undefined
@@ -54,7 +54,11 @@ describe('DeFlock-compatible OSM data', () => {
 
     expect(String(capturedRequest?.input)).toContain('overpass-api.de')
     expect(capturedRequest?.options?.method).toBe('POST')
-    expect(String(capturedRequest?.options?.body)).toContain('surveillance%3Atype')
-    expect(String(capturedRequest?.options?.body)).toContain('ALPR')
+    const requestData = new URLSearchParams(
+      String(capturedRequest?.options?.body),
+    ).get('data')
+    expect(requestData).toContain('surveillance:type')
+    expect(requestData).toContain('ALPR')
+    expect(requestData).toContain('out tags center;')
   })
 })
