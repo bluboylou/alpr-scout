@@ -1,6 +1,7 @@
 import {
   AppLocationAccuracy,
   CreateStartUpPageContainer,
+  ImuReportPace,
   OsEventTypeList,
   StartUpPageCreateResult,
   TextContainerProperty,
@@ -31,6 +32,8 @@ import {
   type ReportDraft,
 } from './report'
 import {
+  appendPhoneLogLine,
+  initPhoneImuLog,
   showNearbyCameraOnPhone,
   showPhoneMessage,
   showReportHandoffOnPhone,
@@ -44,7 +47,7 @@ const DEMO_NOTICE = 'DEMO DATA - live lookup unavailable'
 const SHOW_DEMO_CAMERA =
   import.meta.env.DEV && new URLSearchParams(window.location.search).get('preview') === 'camera'
 
-const HOME_ACTIONS = ['nearby', 'report', 'refresh'] as const
+const HOME_ACTIONS = ['nearby', 'report', 'refresh', 'imu'] as const
 const PHOTO_CHOICES = ['Camera', 'Album', 'No photo'] as const
 
 type HomeAction = (typeof HOME_ACTIONS)[number]
@@ -61,6 +64,21 @@ type Screen =
   | { kind: 'report-direction'; direction: number }
   | { kind: 'report-confirm' }
   | { kind: 'report-ready'; notice?: string }
+  | {
+      kind: 'imu-probe'
+      /** Latest accelerometer/gyroscope x-axis reading (may be undefined). */
+      x?: number
+      /** Latest accelerometer/gyroscope y-axis reading (may be undefined). */
+      y?: number
+      /** Latest accelerometer/gyroscope z-axis reading (may be undefined). */
+      z?: number
+      /** Total number of IMU samples received since the probe started. */
+      sampleCount: number
+      /** Measured sample rate in samples/sec (samples / elapsedSeconds). */
+      rate: number
+      /** Elapsed milliseconds since the probe started streaming. */
+      elapsedMs: number
+    }
 
 interface WorkingReport {
   location: AppLocation
@@ -91,6 +109,26 @@ class AlprScoutApp {
   private lastLocation: AppLocation | null = null
   private report: WorkingReport | null = null
   private inputLocked = false
+
+  // ── IMU probe state ──────────────────────────────────────────────────
+  //
+  // The IMU probe is a measurement instrument — it streams raw
+  // accelerometer/gyroscope samples from the G2 and logs them to the
+  // phone panel so we can derive axis meanings and units from real data.
+  //
+  // imuStartMs: Date.now() captured when streaming began; used to
+  //   compute elapsedMs and the rate (samples / elapsedSeconds).
+  //
+  // imuLastRenderMs: Timestamp of the last glasses re-render; we throttle
+  //   renders to ~4/sec (250 ms) so a 10 Hz stream does not spam BLE.
+  //
+  // IMU_RENDER_THROTTLE_MS: Minimum interval between glasses re-renders.
+  //
+  // The phone log (appendPhoneLogLine) captures EVERY sample — the
+  // throttle only limits how often the glasses display is refreshed.
+  private imuStartMs = 0
+  private imuLastRenderMs = 0
+  private readonly IMU_RENDER_THROTTLE_MS = 250
 
   constructor(private readonly bridge: EvenAppBridge) {}
 
@@ -169,6 +207,7 @@ class AlprScoutApp {
           `Nearby cameras (${this.nearby.length})`,
           'Report a camera',
           'Refresh nearby data',
+          'IMU probe (calibration)',
         ]
         const rows = labels.map((label, index) =>
           menuLine(index === screen.selection, label),
@@ -326,6 +365,31 @@ class AlprScoutApp {
             'Double-press home',
           ].join('\n'),
         )
+        return
+
+      case 'imu-probe': {
+        // ── IMU probe screen (576x288, ~7 lines) ───────────────────────
+        // A measurement instrument — NOT a compass.  Streams raw
+        // accelerometer/gyroscope x/y/z values so we can derive axis
+        // meanings and units from real data.  No heading math here.
+        //
+        // Format numbers with toFixed(3) when defined, else 'n/a'.
+        const s = this.screen
+        const fmt = (v: number | undefined): string =>
+          v === undefined ? 'n/a' : v.toFixed(3)
+
+        await this.render(
+          [
+            'IMU PROBE (CAL)',
+            `x: ${fmt(s.x)}`,
+            `y: ${fmt(s.y)}`,
+            `z: ${fmt(s.z)}`,
+            `n:${s.sampleCount} r:${s.rate.toFixed(1)}/s`,
+            'Double-press stop',
+          ].join('\n'),
+        )
+        return
+      }
     }
   }
 
@@ -491,6 +555,141 @@ class AlprScoutApp {
     await this.renderCurrent()
   }
 
+  // ── IMU probe: start / stop / sample handling ────────────────────────
+  //
+  // beginImuProbe() — called when the user selects "IMU probe (calibration)"
+  //   from the home menu.  Initialises the phone log panel, opens the IMU
+  //   stream at the fastest pace (P100 = densest data), and renders the
+  //   probe screen.  If imuControl returns false or throws, falls back to
+  //   home with a notice — never traps the user.
+  //
+  // stopImuProbe() — called on double-press (or any exit path).  Closes the
+  //   IMU stream.  Wrapped in try/catch so a failed stop does not trap the
+  //   user on the probe screen.
+  //
+  // handleImuSample(x?, y?, z?) — called for every IMU_DATA_REPORT event
+  //   while the probe screen is active.  Updates latest x/y/z, increments
+  //   sampleCount, recomputes rate = samples / elapsedSeconds, appends a
+  //   JSON line to the phone log, and throttles the glasses re-render to
+  //   ~4/sec so BLE is not spammed.
+
+  /**
+   * Start the IMU probe: initialise the phone log, open the IMU stream,
+   * and render the probe screen.  Falls back to home on failure.
+   */
+  private async beginImuProbe(): Promise<void> {
+    // Reset the phone panel with the IMU log container.
+    initPhoneImuLog()
+
+    // Capture the session start time for rate computation.
+    this.imuStartMs = Date.now()
+    this.imuLastRenderMs = 0
+
+    // Open the IMU stream at the fastest pace (P100 = densest data).
+    // The SDK's imuControl returns true on success, false on failure.
+    // A throw is also possible — both are handled by the catch.
+    let ok = false
+    try {
+      ok = await this.bridge.imuControl(true, ImuReportPace.P100)
+    } catch {
+      ok = false
+    }
+
+    if (!ok) {
+      // IMU is not available on this host (simulator, unsupported
+      // hardware, or the bridge rejected the call).  Fall back to
+      // the home screen with a notice — do NOT trap the user.
+      this.screen = {
+        kind: 'home',
+        selection: 3,
+        notice: 'IMU unavailable on this host',
+      }
+      showPhoneMessage('IMU probe is unavailable on this host.')
+      await this.renderCurrent()
+      return
+    }
+
+    // Stream opened successfully — show the probe screen.
+    this.screen = {
+      kind: 'imu-probe',
+      sampleCount: 0,
+      rate: 0,
+      elapsedMs: 0,
+    }
+    await this.renderCurrent()
+  }
+
+  /**
+   * Stop the IMU stream.  Safe to call even if the stream was never
+   * opened.  A failed stop is caught so the user is never trapped.
+   */
+  private async stopImuProbe(): Promise<void> {
+    try {
+      await this.bridge.imuControl(false)
+    } catch {
+      // A failed stop must not trap the user.  Swallow the error
+      // and let the caller proceed to the home screen.
+    }
+  }
+
+  /**
+   * Handle a single IMU sample while the probe screen is active.
+   *
+   * Updates latest x/y/z, increments sampleCount, recomputes the rate
+   * (samples / elapsedSeconds), appends a JSON line to the phone log,
+   * and throttles the glasses re-render to ~4/sec.
+   *
+   * @param x  Latest x-axis reading (may be undefined).
+   * @param y  Latest y-axis reading (may be undefined).
+   * @param z  Latest z-axis reading (may be undefined).
+   */
+  private async handleImuSample(
+    x?: number,
+    y?: number,
+    z?: number,
+  ): Promise<void> {
+    if (this.screen.kind !== 'imu-probe') return
+
+    const now = Date.now()
+    const elapsedMs = now - this.imuStartMs
+    const sampleCount = this.screen.sampleCount + 1
+
+    // Rate = samples / elapsedSeconds.  We do NOT average 1/dt
+    // because the glasses deliver samples in bursts and mean(1/dt)
+    // over-reads badly.  This cumulative approach is stable.
+    const elapsedSeconds = elapsedMs / 1000
+    const rate = elapsedSeconds > 0 ? sampleCount / elapsedSeconds : 0
+
+    // Update the screen state with the latest sample + stats.
+    this.screen = {
+      kind: 'imu-probe',
+      x,
+      y,
+      z,
+      sampleCount,
+      rate,
+      elapsedMs,
+    }
+
+    // Append the JSON line to the phone log — EVERY sample, no drops.
+    // null when the field is undefined (matches the JSON spec in the brief).
+    const jsonLine = JSON.stringify({
+      t: now,
+      x: x ?? null,
+      y: y ?? null,
+      z: z ?? null,
+    })
+    appendPhoneLogLine(jsonLine)
+
+    // Throttle the glasses re-render to ~4/sec (250 ms) so a 10 Hz
+    // stream does not spam BLE renders.  The phone log already
+    // captured every sample above.
+    if (now - this.imuLastRenderMs >= this.IMU_RENDER_THROTTLE_MS) {
+      this.imuLastRenderMs = now
+      await this.renderCurrent()
+    }
+  }
+
   private async activateHomeAction(action: HomeAction): Promise<void> {
     if (action === 'nearby') {
       if (this.nearby.length === 0) {
@@ -507,6 +706,11 @@ class AlprScoutApp {
       return
     }
 
+    if (action === 'imu') {
+      await this.beginImuProbe()
+      return
+    }
+
     await this.refreshNearby()
   }
 
@@ -514,6 +718,7 @@ class AlprScoutApp {
     switch (this.screen.kind) {
       case 'loading':
       case 'report-location':
+      case 'imu-probe':
         return
 
       case 'home': {
@@ -628,6 +833,13 @@ class AlprScoutApp {
       return
     }
 
+    // If we are leaving the IMU probe, stop the IMU stream first.
+    // stopImuProbe() is internally try/catch-safe, so a failed stop
+    // will not trap the user on the probe screen.
+    if (this.screen.kind === 'imu-probe') {
+      await this.stopImuProbe()
+    }
+
     this.report = null
     this.screen = {
       kind: 'home',
@@ -644,6 +856,31 @@ class AlprScoutApp {
   private async handleEvent(event: EvenHubEvent): Promise<void> {
     const textEvent = event.textEvent
     const sysEvent = event.sysEvent
+
+    // ── IMU sample intercept ──────────────────────────────────────────
+    //
+    // IMU_DATA_REPORT (eventType 8) events arrive as sysEvent payloads with
+    // no textEvent.  They carry raw accelerometer/gyroscope x/y/z readings
+    // in sysEvent.imuData.  We intercept them BEFORE the inputLocked guard
+    // because:
+    //   (a) IMU samples are streaming telemetry, not user input, so they
+    //       must not be blocked by inputLocked (which gates click/swipe
+    //       re-entrancy only).
+    //   (b) The main switch below only handles CLICK/SCROLL/DOUBLE_CLICK;
+    //       eventType 8 would fall through harmlessly, but we need to
+    //       capture every sample while the probe screen is active.
+    //
+    // handleImuSample() checks the current screen kind and no-ops if we
+    // are not on the probe screen.  This path does NOT set inputLocked —
+    // the stream flows unimpeded.
+    if (
+      sysEvent?.eventType === OsEventTypeList.IMU_DATA_REPORT &&
+      sysEvent?.imuData
+    ) {
+      const imu = sysEvent.imuData
+      await this.handleImuSample(imu.x, imu.y, imu.z)
+      return
+    }
 
     if ((!textEvent && !sysEvent) || this.inputLocked) return
     if (textEvent && textEvent.containerID !== MAIN_CONTAINER_ID) return

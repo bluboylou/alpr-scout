@@ -3,6 +3,41 @@
 All notable changes to ALPR Scout are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.6] - 2026-09-02
+
+### Added
+- **Instrumented IMU probe (dev/calibration).** A new "IMU probe" home action
+  streams raw `IMU_DATA_REPORT` samples at the fastest pace (`P100`) and
+  renders live x/y/z plus a sample counter and measured report rate. Every
+  sample is appended to the phone panel as JSON lines so the axis meanings and
+  units can be derived from real hardware data offline.
+
+### Notes
+- **MEASURED ON REAL HARDWARE (G2), not assumed.** The probe capture
+  (`imu-capture-1788310582.jsonl`, 46 samples across rest, pitch, roll and
+  sustained head turns) settles the sensor question definitively:
+  - **Units: normalized g** (1.0 = 1 gravity), NOT m/s². Vector magnitude
+    averages 1.002; 45/46 samples fall within 5% of 1.00, none near 9.81.
+  - **Axes: +Z is up** (mean +0.978 at rest); X and Y span the pitch/roll plane.
+  - **Sensor: 3-axis ACCELEROMETER ONLY.** It reads ~1.0 at rest rather than
+    ~0 (which a gyroscope would), and the magnitude stays pinned between 0.945
+    and 1.033 even through rapid head swings — a gyro channel would exceed 1.0
+    under rotation and never does. No gyroscope is exposed, and no magnetometer.
+    This contradicts Even's own documentation, which advertises
+    "accelerometer / gyroscope".
+  - **Report rate: 10.0 Hz** — `ImuReportPace.P100` really does mean ~100 ms
+    (mean dt 100.3 ms over 30 contiguous samples).
+- **Heading is impossible from this sensor — proven, not assumed.** Comparing a
+  resting sample from before a series of head turns against one after them shows
+  a difference of only 6.3° pitch and 1.5° roll despite a large yaw change.
+  Yaw about the vertical axis leaves no signature in a 3-axis accelerometer:
+  gravity points the same way whichever direction you face. A live magnetic
+  compass cannot be built from this data.
+- What the sensor *can* give us is accurate head tilt (pitch/roll), which is
+  genuinely useful for aiming a report at a camera. `AppLocation.heading` remains
+  the only true-north source, but it is GPS course-over-ground: valid only while
+  moving, and it describes travel direction rather than head orientation.
+
 ## [0.1.5] - 2026-09-01
 
 ### Added
