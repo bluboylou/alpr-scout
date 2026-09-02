@@ -9,6 +9,16 @@ Format based on [Keep a Changelog](https://keepachangelog.com/).
 - **Mini compass HUD on the nearby-camera screen.** A compact bearing readout
   now points from your position toward the selected camera (matching the
   existing cardinal cue), so you can tell at a glance which way to turn.
+  It pairs an 8-point Unicode arrow (`↑ ↗ → ↘ ↓ ↙ ← ↖`) with the bearing in
+  degrees and its cardinal, e.g. `↑ 12° N`, `↗ 45° NE`, `← 270° W`.
+
+### Notes
+- **Confirmed on G2 hardware (2026-09-02).** The Unicode compass arrows render
+  correctly on the glasses display — no substitution boxes or blanks, so the
+  glyph set ships as-is with no ASCII fallback needed.
+- The screen is 576x288 px. To fit the added compass line within ~7 lines, the
+  distance line dropped its standalone cardinal (the compass line carries it)
+  and the two footer hints were merged into one line.
 
 ## [0.1.4] - 2026-09-01
 
