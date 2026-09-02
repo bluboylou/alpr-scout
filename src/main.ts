@@ -15,6 +15,7 @@ import './styles.css'
 import {
   cameraDisplayName,
   fetchNearbyCameras,
+  formatCameraFacing,
   type NearbyCamera,
 } from './deflock-data'
 import { createDemoCameras, DEMO_LOCATION } from './demo-data'
@@ -194,7 +195,7 @@ class AlprScoutApp {
           return
         }
 
-        const facing = camera.tags.direction || camera.tags['camera:direction']
+        const facing = formatCameraFacing(camera.tags)
         await this.render(
           [
             `NEARBY ${this.screen.index + 1}/${this.nearby.length}`,

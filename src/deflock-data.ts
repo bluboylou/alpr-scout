@@ -1,6 +1,8 @@
 import {
+  cardinalDirection,
   distanceMeters,
   initialBearingDegrees,
+  normalizeDegrees,
   type Coordinate,
 } from './geo'
 
@@ -92,10 +94,15 @@ function buildNearbyQuery(origin: Coordinate, radiusMeters: number): string {
   const latitude = origin.latitude.toFixed(6)
   const longitude = origin.longitude.toFixed(6)
 
-  // `out tags` omits node latitude/longitude, which makes otherwise valid
-  // matches impossible for parseOverpassResponse to place on the map.
-  // `center` keeps the compact tag response while retaining node geometry.
-  return `[out:json][timeout:20];node(around:${radius},${latitude},${longitude})["man_made"="surveillance"]["surveillance:type"="ALPR"];out tags center;`
+  // Broaden discovery beyond the strict `surveillance:type=ALPR` tag:
+  //  - also match ALPR synonyms (ANPR/LPR/license-plate recognition)
+  //  - also match major ALPR manufacturers even when mappers omit the type tag
+  // Results are de-duplicated by node id downstream. `center` keeps node
+  // geometry so matched cameras can be placed on the map and linked.
+  return `[out:json][timeout:20];(
+  node(around:${radius},${latitude},${longitude})["man_made"="surveillance"]["surveillance:type"~"ALPR|ANPR|LPR|license_plate",i];
+  node(around:${radius},${latitude},${longitude})["man_made"="surveillance"]["manufacturer"~"Flock|Motorola|Vigilant|Genetec|Leonardo|Neology|Rekor",i];
+);out tags center;`
 }
 
 export async function fetchNearbyCameras(
@@ -134,4 +141,37 @@ export function cameraDisplayName(camera: NearbyCamera): string {
     camera.tags.operator ||
     'Unidentified ALPR'
   )
+}
+
+const DIRECTION_CARDINALS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'] as const
+
+export function parseCameraDirections(tags: Record<string, string>): number[] {
+  const raw = tags.direction ?? tags['camera:direction']
+  if (!raw) return []
+
+  return raw
+    .split(/[;,]/)
+    .map((token) => token.trim())
+    .filter(Boolean)
+    .map(parseDirectionToken)
+    .filter((value): value is number => value !== null)
+    .sort((left, right) => left - right)
+}
+
+function parseDirectionToken(token: string): number | null {
+  const numeric = Number(token)
+  if (Number.isFinite(numeric)) return normalizeDegrees(numeric)
+
+  const index = DIRECTION_CARDINALS.indexOf(
+    token.toUpperCase() as (typeof DIRECTION_CARDINALS)[number],
+  )
+  return index >= 0 ? index * 45 : null
+}
+
+export function formatCameraFacing(tags: Record<string, string>): string {
+  const directions = parseCameraDirections(tags)
+  if (directions.length === 0) return 'Unknown'
+  return directions
+    .map((degrees) => `${Math.round(degrees)}° ${cardinalDirection(degrees)}`)
+    .join(' / ')
 }
