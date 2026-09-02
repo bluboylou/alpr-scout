@@ -3,6 +3,13 @@
 All notable changes to ALPR Scout are documented in this file.
 Format based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.1.5] - 2026-09-01
+
+### Added
+- **Mini compass HUD on the nearby-camera screen.** A compact bearing readout
+  now points from your position toward the selected camera (matching the
+  existing cardinal cue), so you can tell at a glance which way to turn.
+
 ## [0.1.4] - 2026-09-01
 
 ### Added

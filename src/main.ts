@@ -196,17 +196,29 @@ class AlprScoutApp {
         }
 
         const facing = formatCameraFacing(camera.tags)
+
+        // ── Mini compass HUD ──────────────────────────────────────────────
+        // 8-point Unicode arrow rose, indexed by rounding the normalised
+        // bearing to the nearest 45° octant.  The compass line sits directly
+        // beneath the "NEARBY x/y" header so the user can glance at the
+        // arrow + bearing + cardinal to orient toward the selected camera.
+        // Example outputs: "↑ 12° N", "↗ 45° NE", "← 270° W".
+        const COMPASS_ARROWS = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'] as const
+        const arrowIndex = Math.round(normalizeDegrees(camera.bearingDegrees) / 45) % COMPASS_ARROWS.length
+        const needle = COMPASS_ARROWS[arrowIndex] ?? '↑'
+        const bearing = Math.round(camera.bearingDegrees)
+        const cardinal = cardinalDirection(camera.bearingDegrees)
+        const compassLine = `${needle} ${bearing}° ${cardinal}`
+
         await this.render(
           [
             `NEARBY ${this.screen.index + 1}/${this.nearby.length}`,
+            compassLine,
             cameraDisplayName(camera),
-            `${formatDistance(camera.distanceMeters)} ${cardinalDirection(camera.bearingDegrees)}`,
+            formatDistance(camera.distanceMeters),
             `Faces: ${truncate(facing, 28)}`,
             `Operator: ${truncate(camera.tags.operator, 30)}`,
-            this.screen.notice || '',
-            '',
-            'Swipe cameras | Press phone',
-            'Double-press back',
+            this.screen.notice || 'Swipe cameras | D-press back',
           ].join('\n'),
         )
         return
